@@ -139,6 +139,7 @@ export function registerResource(res: Resource, t: string, name: string, custom:
         req.setProvider(resop.providerRef);
         req.setDependenciesList(Array.from(resop.dependencies));
         req.setDeletebeforereplace((<any>opts).deleteBeforeReplace || false);
+        req.setAliasesList(opts.aliases);
 
         const propertyDependencies = req.getPropertydependenciesMap();
         for (const key of Object.keys(resop.propertyDependencies)) {

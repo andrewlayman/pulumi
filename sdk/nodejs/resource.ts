@@ -157,6 +157,10 @@ export interface ResourceOptions {
      * When set to true, protect ensures this resource cannot be deleted.
      */
     protect?: boolean;
+    /**
+     * An optional list of aliases to treat this resoruce as matching.
+     */
+    aliases?: URN[];
 }
 
 /**

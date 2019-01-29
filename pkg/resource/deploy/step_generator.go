@@ -47,6 +47,7 @@ type stepGenerator struct {
 	// a map from URN to a list of property keys that caused the replacement of a dependent resource during a
 	// delete-before-replace.
 	dependentReplaceKeys map[resource.URN][]resource.PropertyKey
+	aliased              map[resource.URN]bool // set of URNs that were aliased and shoud not be deleted
 }
 
 // GenerateReadSteps is responsible for producing one or more steps required to service
@@ -122,13 +123,23 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, *re
 	}
 	sg.urns[urn] = true
 
-	// Check for an old resource so that we can figure out if this is a create, delete, etc., and/or to diff.
-	old, hasOld := sg.plan.Olds()[urn]
+	// Check for an old resource so that we can figure out if this is a create, delete, etc., and/or to diff.  We look
+	// up first by URN and then by any provided aliases.  If it is found using an alias, record that alias so that we do
+	// not delete the aliased resource later.
 	var oldInputs resource.PropertyMap
 	var oldOutputs resource.PropertyMap
-	if hasOld {
-		oldInputs = old.Inputs
-		oldOutputs = old.Outputs
+	var old *resource.State
+	var hasOld bool
+	for _, urnOrAlias := range append([]resource.URN{urn}, goal.Aliases...) {
+		old, hasOld = sg.plan.Olds()[urnOrAlias]
+		if hasOld {
+			oldInputs = old.Inputs
+			oldOutputs = old.Outputs
+			if urnOrAlias != urn {
+				sg.aliased[urnOrAlias] = true
+			}
+			break
+		}
 	}
 
 	// Produce a new state object that we'll build up as operations are performed.  Ultimately, this is what will
@@ -266,15 +277,13 @@ func (sg *stepGenerator) GenerateSteps(event RegisterResourceEvent) ([]Step, *re
 		} else {
 			// Determine whether the change resulted in a diff.
 			d, diffErr := sg.diff(urn, old.ID, oldInputs, oldOutputs, inputs, prov, allowUnknowns)
-			if diffErr != nil {
-				// If the plugin indicated that the diff is unavailable, assume that the resource will be updated and
-				// report the message contained in the error.
-				if _, ok := diffErr.(plugin.DiffUnavailableError); ok {
-					d = plugin.DiffResult{Changes: plugin.DiffSome}
-					sg.plan.ctx.Diag.Warningf(diag.RawMessage(urn, diffErr.Error()))
-				} else {
-					return nil, result.FromError(diffErr)
-				}
+			// If the plugin indicated that the diff is unavailable, assume that the resource will be updated and
+			// report the message contained in the error.
+			if _, ok := diffErr.(plugin.DiffUnavailableError); ok {
+				d = plugin.DiffResult{Changes: plugin.DiffSome}
+				sg.plan.ctx.Diag.Warningf(diag.RawMessage(urn, diffErr.Error()))
+			} else if diffErr != nil {
+				return nil, result.FromError(diffErr)
 			}
 			diff = d
 		}
@@ -445,8 +454,10 @@ func (sg *stepGenerator) GenerateDeletes() []Step {
 
 				logging.V(7).Infof("Planner decided to delete '%v' due to replacement", res.URN)
 				sg.deletes[res.URN] = true
+
 				dels = append(dels, NewDeleteReplacementStep(sg.plan, res, false))
-			} else if !sg.sames[res.URN] && !sg.updates[res.URN] && !sg.replaces[res.URN] && !sg.reads[res.URN] {
+			} else if !sg.sames[res.URN] && !sg.updates[res.URN] && !sg.replaces[res.URN] &&
+				!sg.reads[res.URN] && !sg.aliased[res.URN] {
 				// NOTE: we deliberately do not check sg.deletes here, as it is possible for us to issue multiple
 				// delete steps for the same URN if the old checkpoint contained pending deletes.
 				logging.V(7).Infof("Planner decided to delete '%v'", res.URN)
@@ -756,5 +767,6 @@ func newStepGenerator(plan *Plan, opts Options) *stepGenerator {
 		deletes:              make(map[resource.URN]bool),
 		pendingDeletes:       make(map[*resource.State]bool),
 		dependentReplaceKeys: make(map[resource.URN][]resource.PropertyKey),
+		aliased:              make(map[resource.URN]bool),
 	}
 }

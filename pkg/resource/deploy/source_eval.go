@@ -256,7 +256,8 @@ func (d *defaultProviders) newRegisterDefaultProviderEvent(
 	// Create the result channel and the event.
 	done := make(chan *RegisterResult)
 	event := &registerResourceEvent{
-		goal: resource.NewGoal(providers.MakeProviderType(pkg), "default", true, inputs, "", false, nil, "", nil, nil, false),
+		goal: resource.NewGoal(providers.MakeProviderType(pkg), "default", true, inputs, "",
+			false, nil, "", nil, nil, false, nil),
 		done: done,
 	}
 	return event, done, nil
@@ -595,6 +596,11 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 		provider = ref.String()
 	}
 
+	aliases := []resource.URN{}
+	for _, aliasURN := range req.GetAliases() {
+		aliases = append(aliases, resource.URN(aliasURN))
+	}
+
 	dependencies := []resource.URN{}
 	for _, dependingURN := range req.GetDependencies() {
 		dependencies = append(dependencies, resource.URN(dependingURN))
@@ -632,7 +638,7 @@ func (rm *resmon) RegisterResource(ctx context.Context,
 	// Send the goal state to the engine.
 	step := &registerResourceEvent{
 		goal: resource.NewGoal(t, name, custom, props, parent, protect, dependencies, provider, nil,
-			propertyDependencies, deleteBeforeReplace),
+			propertyDependencies, deleteBeforeReplace, aliases),
 		done: make(chan *RegisterResult),
 	}
 
